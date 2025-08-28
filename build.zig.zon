@@ -1,0 +1,16 @@
+.{
+    .name = .dergdrive,
+    .version = "0.1.0",
+    .fingerprint = 0xbfb496ab9a7c5878,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .net = .{
+            .path = "../zig-net",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
