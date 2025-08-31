@@ -5,7 +5,8 @@
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
         .net = .{
-            .path = "../zig-net",
+            .url = "https://github.com/ZenithMeetsNadir/zig-net/archive/refs/tags/v0.2.4.tar.gz",
+            .hash = "net-0.2.4-YMtPsVphAABRzxluBnceUzuGGcXfyaoJ6w6fsWs79mBZ",
         },
     },
     .paths = .{
