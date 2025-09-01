@@ -11,7 +11,7 @@ pub fn main() !void {
     var dir = try std.fs.openDirAbsolute("/home/vlcaak", .{ .iterate = true });
     defer dir.close();
 
-    const rule_text = @embedFile("./include");
+    const rule_text = @embedFile("./include.txt");
 
     var tree = IncludeTree.init(dir, rule_text, allocator);
     defer tree.deinit();
