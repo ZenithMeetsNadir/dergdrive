@@ -16,11 +16,19 @@ pub fn main() !void {
     var tree = IncludeTree.init(dir, rule_text, allocator);
     defer tree.deinit();
 
-    try tree.buildGraph();
-    for (tree.flat_tree.items) |item| {
-        switch (item) {
-            .file => |file| std.debug.print("file: {s}\n", .{file}),
-            .dir => |dir_node| std.debug.print("dir: {s} (breadth: {d})\n", .{ dir_node.name, dir_node.flat_breadth }),
+    try tree.buildTree();
+
+    var iter = tree.iterateTree(allocator);
+    defer iter.deinit();
+
+    var node_storage: ?TreeNode = null;
+    var level: ?usize = null;
+    level = try iter.nextNodeLevel(&node_storage);
+
+    while (level) |lev| : (level = try iter.nextNodeLevel(&node_storage)) {
+        switch (node_storage.?) {
+            .file => |file_name| std.debug.print("{d}; file: {s}\n", .{ lev, file_name }),
+            .dir => |dir_node| std.debug.print("{d}; dir: {s} (breadth: {d})\n", .{ lev, dir_node.name, dir_node.flat_breadth }),
         }
     }
 }
@@ -57,23 +65,98 @@ const RuleIterator = struct {
     }
 };
 
-const MatchingIterator = struct {
+const MatchIterator = struct {
     path: []const u8,
     is_dir: bool,
     rules: RuleIterator,
 
-    pub fn init(path: []const u8, is_dir: bool, rules: RuleIterator) MatchingIterator {
+    pub fn init(path: []const u8, is_dir: bool, rules: RuleIterator) MatchIterator {
         return .{ .path = path, .is_dir = is_dir, .rules = rules };
     }
 
-    pub fn next(self: *MatchingIterator) ?[]const u8 {
-        const rule = self.rules.next() orelse return null;
-        return if (match(self.path, self.is_dir, rule)) rule else null;
+    pub fn next(self: *MatchIterator) ?[]const u8 {
+        var rule: ?[]const u8 = self.rules.next();
+        return while (rule) |r| : (rule = self.rules.next()) {
+            if (match(self.path, self.is_dir, r))
+                break r;
+        } else null;
     }
 
-    pub fn peek(self: MatchingIterator) ?[]const u8 {
+    pub fn peek(self: MatchIterator) ?[]const u8 {
         var copy = self;
         return copy.next();
+    }
+};
+
+const TreeIterator = struct {
+    tree: IncludeTree,
+    index: usize = 0,
+    level_stack: std.ArrayList(LevelledNodesIterator) = .empty,
+    level: usize = 1,
+    allocator: std.mem.Allocator,
+
+    pub const LevelledNodesIterator = struct {
+        flat_tree: []const TreeNode,
+        index: usize = 0,
+
+        pub fn next(self: *LevelledNodesIterator) ?TreeNode {
+            if (self.index >= self.flat_tree.len)
+                return null;
+
+            const node = self.flat_tree[self.index];
+            self.index += switch (node) {
+                .file => 1,
+                .dir => |dir_node| dir_node.flat_breadth + 1,
+            };
+
+            return node;
+        }
+    };
+
+    pub fn deinit(self: *TreeIterator) void {
+        self.level_stack.deinit(self.allocator);
+    }
+
+    pub fn nextNodeLevel(self: *TreeIterator, node_storage: *?TreeNode) std.mem.Allocator.Error!?usize {
+        if (self.level > self.level_stack.items.len) {
+            const level_breadth: usize = if (self.level > 1) switch (self.tree.flat_tree.items[self.index - 1]) {
+                .dir => |dir_node| dir_node.flat_breadth,
+                else => unreachable,
+            } else self.tree.flat_tree.items.len;
+
+            try self.level_stack.append(self.allocator, .{ .flat_tree = self.tree.flat_tree.items[self.index .. self.index + level_breadth] });
+        }
+
+        var current_level_iter = &self.level_stack.items[self.level - 1];
+        var node: ?TreeNode = current_level_iter.next();
+
+        while (node == null and self.level > 1) {
+            _ = self.level_stack.pop();
+            self.level -= 1;
+
+            current_level_iter = &self.level_stack.items[self.level - 1];
+            node = current_level_iter.next();
+        }
+
+        const current_level = self.level;
+
+        if (node) |n| {
+            switch (n) {
+                .dir => self.level += 1,
+                else => {},
+            }
+        }
+
+        self.index += 1;
+
+        node_storage.* = node;
+        return if (node != null) current_level else null;
+    }
+
+    pub fn nextNode(self: *TreeIterator) std.mem.Allocator.Error!?TreeNode {
+        var node_storage: ?TreeNode = null;
+        _ = try self.nextNodeLevel(&node_storage);
+        return node_storage;
     }
 };
 
@@ -83,7 +166,6 @@ flat_tree: std.ArrayList(TreeNode) = .empty,
 allocator: std.mem.Allocator,
 root_dir: std.fs.Dir,
 rules: RuleIterator,
-level: usize = 0,
 
 pub fn init(root_dir: std.fs.Dir, rule_text: []const u8, allocator: std.mem.Allocator) IncludeTree {
     return .{ .allocator = allocator, .root_dir = root_dir, .rules = .init(rule_text) };
@@ -100,16 +182,20 @@ pub fn deinit(self: *IncludeTree) void {
     self.flat_tree.deinit(self.allocator);
 }
 
+pub fn buildTree(self: *IncludeTree) IterateDirError!void {
+    const nodes = try self.iterateDir(self.root_dir, self.rules, 1, "");
+    std.debug.assert(nodes == self.flat_tree.items.len);
+}
+
+pub fn iterateTree(self: IncludeTree, allocator: std.mem.Allocator) TreeIterator {
+    return .{ .tree = self, .allocator = allocator };
+}
+
 fn addNode(self: *IncludeTree, node: TreeNode) std.mem.Allocator.Error!void {
     if (self.flat_tree.items.len == self.flat_tree.capacity)
         try self.flat_tree.ensureTotalCapacity(self.allocator, self.flat_tree.capacity + capacity_exp);
 
     self.flat_tree.appendAssumeCapacity(node);
-}
-
-pub fn buildGraph(self: *IncludeTree) IterateDirError!void {
-    const nodes = try self.iterateDir(self.root_dir, self.rules, 1, "");
-    std.debug.assert(nodes == self.flat_tree.items.len);
 }
 
 fn iterateDir(self: *IncludeTree, dir: std.fs.Dir, rule_iter: RuleIterator, level: usize, path: []const u8) IterateDirError!usize {
@@ -141,7 +227,7 @@ fn iterateDir(self: *IncludeTree, dir: std.fs.Dir, rule_iter: RuleIterator, leve
 
         std.debug.print("full_path: {s}\n", .{full_path.path});
 
-        var match_iter: MatchingIterator = .init(full_path.path, entry.kind == .directory, rule_iter);
+        var match_iter: MatchIterator = .init(full_path.path, entry.kind == .directory, rule_iter);
         var prio_rule: ?[]const u8 = null;
 
         while (match_iter.peek() != null)
@@ -169,11 +255,12 @@ fn iterateDir(self: *IncludeTree, dir: std.fs.Dir, rule_iter: RuleIterator, leve
 
         if (entry.kind == .directory) {
             const level_inc: usize = if (node_added) 1 else 0;
-            if (searchForChildRules(full_path.path, rule_iter, level + level_inc)) {
+            if (searchForChildRules(full_path.path, match_iter.rules, level + level_inc)) {
                 var child_dir = try dir.openDir(entry.name, .{ .iterate = true });
                 defer child_dir.close();
 
-                const child_dir_nodes = try self.iterateDir(child_dir, match_iter.rules, level + level_inc, full_path.path);
+                const child_iter = if (node_added) match_iter.rules else rule_iter;
+                const child_dir_nodes = try self.iterateDir(child_dir, child_iter, level + level_inc, full_path.path);
 
                 if (node_index) |index| {
                     switch (self.flat_tree.items[index]) {
