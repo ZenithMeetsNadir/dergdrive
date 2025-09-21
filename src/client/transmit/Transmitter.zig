@@ -4,11 +4,18 @@ const root = @import("dergdrive");
 const proto = root.proto;
 const crypt = root.crypt;
 const aes = crypt.aes;
+const conf = root.conf;
+const cli = root.cli;
 
 const Transmitter = @This();
 
 pub const PipeFileError = net.TcpClient.SendError || error{ReadFailed};
 pub const PostFileError = PipeFileError || std.fs.File.StatError;
+pub const FetchManifestError = error{};
+pub const GetKeyError = error{
+    ManifestFormatInvalid,
+    Timeout,
+};
 
 pub const buffer_size: usize = 0x20000; // 128 kiB
 pub const content_buf_size: usize = buffer_size - aes.nonce_length - aes.tag_length;
@@ -49,17 +56,34 @@ fn pipeFile(self: *Transmitter, file: std.fs.File, key: [crypt.key_length]u8) Pi
 }
 
 pub fn postFile(self: *Transmitter, file: std.fs.File) PostFileError!void {
+    _ = self;
     const stat = try file.stat();
     const data_size = stat.size + (stat.size / content_buf_size + 1) * (aes.nonce_length + aes.tag_length);
+    _ = data_size;
 }
 
-pub fn fetchManifest(self: Transmitter) []const u8 {
+pub fn fetchManifest(self: Transmitter, allocator: std.mem.Allocator) FetchManifestError![]const u8 {
     _ = self;
+    _ = allocator;
     return "a8c22e46";
 }
 
-pub fn retrieveSalt(manifest: *[]const u8) []const u8 {
-    const salt = manifest[0..crypt.salt_lenght];
-    manifest = manifest[crypt.salt_lenght..];
-    return salt;
+fn retrieveSalt(manifest: []const u8) []const u8 {
+    return manifest[0..crypt.salt_length];
+}
+
+fn getKey(self: Transmitter, allocator: std.mem.Allocator) GetKeyError![crypt.key_length]u8 {
+    if (conf.getConf(.secret, crypt.key_path, allocator)) |key| {
+        std.log.info("cached key: {}", .{key});
+        if (key.len == crypt.key_length)
+            return key;
+    }
+
+    std.log.info("key not cached, fetching manifest", .{});
+
+    // TODO make this fetch async
+    const manifest = try self.fetchManifest(allocator);
+    const salt = retrieveSalt(manifest);
+
+    const passw = try cli.prompt.promptUser("enter password for {s}", .{"user"}, allocator);
 }

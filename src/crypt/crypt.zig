@@ -4,3 +4,5 @@ pub const aes = std.crypto.aead.aes_gcm.Aes256Gcm;
 
 pub const salt_lenght = 8;
 pub const key_length = 16;
+
+pub const key_path: []const u8 = "scrtkey";
