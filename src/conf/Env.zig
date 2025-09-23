@@ -4,6 +4,8 @@ const conf = @import("conf.zig");
 const Env = @This();
 
 const KeyValueIterator = struct {
+    pub const InitError = std.mem.Allocator.Error || std.fs.File.StatError || std.fs.File.ReadError;
+
     pub const KVPair = struct {
         key: []const u8,
         value: []const u8,
@@ -16,7 +18,7 @@ const KeyValueIterator = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         env_file: std.fs.File,
-    ) (std.mem.Allocator.Error || std.fs.File.StatError || std.fs.File.ReadError)!KeyValueIterator {
+    ) InitError!KeyValueIterator {
         const stat = try env_file.stat();
         const buf = try allocator.alloc(u8, stat.size);
 
@@ -34,7 +36,7 @@ const KeyValueIterator = struct {
         self.allocator.free(self.line_iter.buffer);
     }
 
-    pub fn refresh(self: *KeyValueIterator) (std.mem.Allocator.Error || std.fs.File.StatError || std.fs.File.ReadError)!void {
+    pub fn refresh(self: *KeyValueIterator) InitError!void {
         self.deinit();
         self = try .init(self.allocator, self.env_file);
     }
@@ -45,8 +47,8 @@ const KeyValueIterator = struct {
             if (trimmed.len > 0 and trimmed[0] != '#') {
                 if (std.mem.indexOfScalar(u8, trimmed, kv_delim)) |delim| {
                     return .{
-                        .key = std.mem.slice(trimmed, 0, delim),
-                        .value = std.mem.slice(trimmed, delim + 1, trimmed.len),
+                        .key = line[0..delim],
+                        .value = line[delim + 1 ..],
                     };
                 }
             }
@@ -54,7 +56,7 @@ const KeyValueIterator = struct {
     }
 };
 
-pub const GetIteratorError = std.mem.Allocator.Error || conf.CreateConfFileError;
+pub const GetIteratorError = std.mem.Allocator.Error || conf.CreateConfFileError || KeyValueIterator.InitError;
 
 pub var env: Env = undefined;
 
@@ -72,9 +74,10 @@ pub fn init(allocator: std.mem.Allocator) Env {
 
 pub fn deinit(self: *Env) void {
     var iter = self.loaded_envs.iterator();
-    for (iter.next()) |entry| {
+    while (iter.next()) |entry| {
         entry.value_ptr.env_file.close();
         entry.value_ptr.deinit();
+        self.allocator.free(entry.key_ptr.*);
     }
 
     self.loaded_envs.deinit();
@@ -82,16 +85,27 @@ pub fn deinit(self: *Env) void {
 
 fn getIteratorPtr(self: *Env, env_file: conf.ConfFile) GetIteratorError!*KeyValueIterator {
     const full_path = try env_file.getFullPath(self.allocator);
-    defer self.allocator.free(full_path);
 
     const res = try self.loaded_envs.getOrPut(full_path);
-    if (!res.found_existing)
-        res.value_ptr.* = .init(self.allocator, try conf.createConfFile(env_file, true, self.allocator));
+    if (!res.found_existing) {
+        const file = try conf.createConfFile(env_file, true, self.allocator);
+        errdefer file.close();
+
+        res.value_ptr.* = try .init(self.allocator, file);
+    }
+
+    if (res.found_existing)
+        self.allocator.free(full_path);
 
     return res.value_ptr;
 }
 
-pub fn get(self: *Env, env_file: conf.ConfFile, key: []const u8) GetIteratorError!?KeyValueIterator {
+fn refreshIterFile(self: *Env, iter: *KeyValueIterator, env_file: conf.ConfFile) GetIteratorError!void {
+    iter.env_file.close();
+    iter.env_file = try conf.createConfFile(env_file, true, self.allocator);
+}
+
+pub fn get(self: *Env, env_file: conf.ConfFile, key: []const u8) GetIteratorError!?[]const u8 {
     const iter = try self.getIteratorPtr(env_file);
     iter.line_iter.index = 0;
     return while (iter.next()) |entry| {
@@ -101,41 +115,84 @@ pub fn get(self: *Env, env_file: conf.ConfFile, key: []const u8) GetIteratorErro
 }
 
 pub fn set(self: *Env, env_file: conf.ConfFile, key: []const u8, value: []const u8) (GetIteratorError || std.fs.File.WriteError)!void {
-    const iter = try self.getIteratorPtr(env_file);
+    var iter = try self.getIteratorPtr(env_file);
+    try self.refreshIterFile(iter, env_file);
     iter.line_iter.index = 0;
 
     var key_len: usize = 0;
     var val_len: usize = 0;
     var index: usize = 0;
-    const insert = while (iter.next()) |entry| : (index = iter.line_iter.index) {
+    const insert = while (iter.next()) |entry| : ({
+        if (iter.line_iter.index) |i|
+            index = i;
+    }) {
         if (std.mem.eql(u8, entry.key, key)) {
-            key_len = entry.value.len;
+            key_len = entry.key.len;
             val_len = entry.value.len;
             break true;
         }
     } else false;
 
+    var buf: []u8 = @constCast(iter.line_iter.buffer);
+
     if (insert) {
         const tail_index = index + key_len + val_len + 1;
-        const len_diff = value.len - val_len;
-        const new_len = iter.line_iter.buffer.len + len_diff;
-        const new_buf = try iter.allocator.realloc(iter.line_iter.buffer, new_len);
+        const len_diff: isize = @bitCast(value.len -% val_len);
+        const old_len = buf.len;
+        const new_len: usize = @bitCast(@as(isize, @bitCast(buf.len)) + len_diff);
 
-        @memmove(new_buf[tail_index + len_diff ..], new_buf[tail_index .. new_buf.len - len_diff]);
-        @memcpy(new_buf[index + key_len + 1 ..], value);
+        // move before resizing if the new length is smaller to avoid clipping
+        if (new_len < buf.len)
+            @memmove(buf[@bitCast(@as(isize, @bitCast(tail_index)) + len_diff)..new_len], buf[tail_index..]);
 
-        iter.line_iter.buffer = new_buf;
+        buf = try iter.allocator.realloc(buf, new_len);
+
+        if (new_len >= old_len)
+            @memmove(buf[@bitCast(@as(isize, @bitCast(tail_index)) + len_diff)..], buf[tail_index..old_len]);
+
+        const value_index = index + key_len + 1;
+        @memcpy(buf[value_index .. value_index + value.len], value);
     } else {
-        const old_len = iter.line_iter.buffer.len;
+        var old_len = buf.len;
+        const line_break = old_len != 0 and buf[old_len - 1] == '\n' or old_len == 0;
+
+        if (!line_break)
+            old_len += 1;
+
         const new_len = old_len + key.len + value.len + 1;
-        const new_buf = try iter.allocator.realloc(iter.line_iter.buffer, new_len);
+        buf = try iter.allocator.realloc(buf, new_len);
 
-        @memcpy(new_buf[old_len .. old_len + key.len], key);
-        new_buf[old_len + key.len] = kv_delim;
-        @memcpy(new_buf[old_len + key.len + 1 ..], value);
+        if (!line_break)
+            buf[old_len - 1] = '\n';
 
-        iter.line_iter.buffer = new_buf;
+        @memcpy(buf[old_len .. old_len + key.len], key);
+        buf[old_len + key.len] = kv_delim;
+        @memcpy(buf[old_len + key.len + 1 ..], value);
     }
 
-    try iter.env_file.write(iter.line_iter.buffer);
+    iter.line_iter.buffer = buf;
+    const bytes_written = try iter.env_file.write(buf);
+    std.debug.assert(bytes_written == buf.len);
+}
+
+test "env" {
+    env = .init(std.testing.allocator);
+    defer env.deinit();
+
+    const test_file: conf.ConfFile = .{
+        .nspace = .internal,
+        .sub_path = "test.env",
+    };
+
+    try env.set(test_file, "key1", "owo");
+    try env.set(test_file, "key2", "bar");
+    try env.set(test_file, "key1", "foooo");
+
+    var val1 = try env.get(test_file, "key1");
+    try std.testing.expect(std.mem.eql(u8, val1.?, "foooo"));
+
+    try env.set(test_file, "key1", "owo");
+
+    val1 = try env.get(test_file, "key1");
+    try std.testing.expect(std.mem.eql(u8, val1.?, "owo"));
 }

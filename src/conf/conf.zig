@@ -39,6 +39,7 @@ pub const LocNamespace = enum {
                 .global => global_linux,
                 .local => local_linux,
                 .internal => internal,
+                .secret => secret_linux,
             },
             else => @compileError("implement this for your os if you want it so bad"),
         };
@@ -67,10 +68,10 @@ pub fn createConfFile(conf_file: ConfFile, truncate: bool, allocator: std.mem.Al
     const last_slash = std.mem.lastIndexOfScalar(u8, full_path, '/');
     const dir_path = full_path[0 .. last_slash orelse 0];
 
-    const file_delim = if (last_slash) last_slash + 1 else 0;
+    const file_delim = if (last_slash) |pos| pos + 1 else 0;
     const file_path = full_path[file_delim..];
 
-    const dir = try std.fs.cwd().makeOpenPath(dir_path, .{});
+    var dir = try std.fs.cwd().makeOpenPath(dir_path, .{});
     errdefer dir.close();
 
     const file = try dir.createFile(file_path, .{ .read = true, .truncate = truncate });
