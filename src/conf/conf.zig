@@ -73,8 +73,8 @@ pub const ConfFile = struct {
 
     pub fn getFullPath(self: ConfFile, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const u8 {
         const root_path = self.nspace.getRoot();
-        defer allocator.free(root_path);
         const expanded = try expandHomeDir(root_path, allocator);
+        defer allocator.free(expanded);
         return std.mem.join(allocator, "/", &.{ expanded, self.sub_path });
     }
 };
