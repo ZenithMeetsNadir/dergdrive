@@ -180,7 +180,7 @@ test "env" {
     defer env.deinit();
 
     const test_file: conf.ConfFile = .{
-        .nspace = .internal,
+        .nspace = .local,
         .sub_path = "test.env",
     };
 

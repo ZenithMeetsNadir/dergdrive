@@ -46,14 +46,39 @@ pub const LocNamespace = enum {
     }
 };
 
+pub fn expandHomeDir(path: []const u8, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const u8 {
+    switch (builtin.os.tag) {
+        .linux => {
+            if (path.len > 0 and path[0] == '~') {
+                var home = std.posix.getenv("HOME");
+                if (home == null)
+                    home = std.posix.getenv("USERPROFILE");
+
+                if (home == null)
+                    std.debug.panic("user home directory could not be inquired", .{});
+
+                const slices: []const []const u8 = if (path.len > 2 and path[1] == '/') &.{ home.?, path[2..] } else &.{home.?};
+                return std.mem.join(allocator, "/", slices);
+            }
+        },
+        else => {},
+    }
+
+    return allocator.dupe(u8, path);
+}
+
 pub const ConfFile = struct {
     nspace: LocNamespace,
     sub_path: []const u8,
 
     pub fn getFullPath(self: ConfFile, allocator: std.mem.Allocator) std.mem.Allocator.Error![]const u8 {
-        return std.mem.join(allocator, "/", &.{ self.nspace.getRoot(), self.sub_path });
+        const root_path = self.nspace.getRoot();
+        defer allocator.free(root_path);
+        const expanded = try expandHomeDir(root_path, allocator);
+        return std.mem.join(allocator, "/", &.{ expanded, self.sub_path });
     }
 };
+
 pub fn getConf(conf_file: ConfFile, allocator: std.mem.Allocator) GetFileContentError![]const u8 {
     const full_path = try conf_file.getFullPath(allocator);
     defer allocator.free(full_path);
