@@ -3,4 +3,5 @@ zig-out
 .vscode
 
 *.flac
+*.env
 include.txt
