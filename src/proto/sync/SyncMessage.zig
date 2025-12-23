@@ -43,7 +43,7 @@ pub fn composeMsg(data: []const u8) SyncMessage {
 }
 
 pub fn composeMsgFromRequestChunk(req_chunk: RequestChunk, allocator: std.mem.Allocator) std.mem.Allocator.Error!SyncMessage {
-    var msg = composeMsg(try std.mem.concat(allocator, u8, .{ &req_chunk.header, req_chunk.data }));
+    var msg = composeMsg(try std.mem.concat(allocator, u8, &.{ &req_chunk.header, req_chunk.data }));
     msg.allocator = allocator;
 
     return msg;

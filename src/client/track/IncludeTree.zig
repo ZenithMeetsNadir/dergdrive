@@ -50,8 +50,8 @@ pub const TreeNode = union(enum) {
 const RuleIterator = struct {
     iterator: std.mem.SplitIterator(u8, .any),
 
-    pub fn init(text: []const u8) RuleIterator {
-        return .{ .iterator = std.mem.splitAny(u8, text, "\r\n") };
+    pub fn init(rule_text: []const u8) RuleIterator {
+        return .{ .iterator = std.mem.splitAny(u8, rule_text, "\r\n") };
     }
 
     pub fn next(self: *RuleIterator) ?[]const u8 {
@@ -69,22 +69,42 @@ const MatchIterator = struct {
     path: []const u8,
     is_dir: bool,
     rules: RuleIterator,
+    peek_cache: ?[]const u8 = null,
+    peek_iter_state: RuleIterator = undefined,
 
     pub fn init(path: []const u8, is_dir: bool, rules: RuleIterator) MatchIterator {
         return .{ .path = path, .is_dir = is_dir, .rules = rules };
     }
 
     pub fn next(self: *MatchIterator) ?[]const u8 {
-        var rule: ?[]const u8 = self.rules.next();
-        return while (rule) |r| : (rule = self.rules.next()) {
+        if (self.peek_cache) |cached| {
+            self.peek_cache = null;
+            self.rules = self.peek_iter_state;
+            return cached;
+        }
+
+        return while (self.rules.next()) |r| {
             if (match(self.path, self.is_dir, r))
                 break r;
         } else null;
     }
 
-    pub fn peek(self: MatchIterator) ?[]const u8 {
-        var copy = self;
-        return copy.next();
+    pub fn peek(self: *MatchIterator) ?[]const u8 {
+        var copy = self.*;
+        self.peek_cache = copy.next();
+        self.peek_iter_state = copy.rules;
+        return self.peek_cache;
+    }
+
+    /// finds the last matching rule in the iterator without completely consuming it
+    pub fn findLastMatch(self: *MatchIterator) ?[]const u8 {
+        var last_match: ?[]const u8 = null;
+        while (self.peek()) |r| {
+            last_match = r;
+            _ = self.next();
+        }
+
+        return last_match;
     }
 };
 
@@ -191,11 +211,12 @@ pub fn iterateTree(self: IncludeTree, allocator: std.mem.Allocator) TreeIterator
     return .{ .tree = self, .allocator = allocator };
 }
 
-fn addNode(self: *IncludeTree, node: TreeNode) std.mem.Allocator.Error!void {
+fn addNode(self: *IncludeTree, node: TreeNode) std.mem.Allocator.Error!usize {
     if (self.flat_tree.items.len == self.flat_tree.capacity)
         try self.flat_tree.ensureTotalCapacity(self.allocator, self.flat_tree.capacity + capacity_exp);
 
     self.flat_tree.appendAssumeCapacity(node);
+    return self.flat_tree.items.len - 1;
 }
 
 fn iterateDir(self: *IncludeTree, dir: std.fs.Dir, rule_iter: RuleIterator, level: usize, path: []const u8) IterateDirError!usize {
@@ -225,31 +246,30 @@ fn iterateDir(self: *IncludeTree, dir: std.fs.Dir, rule_iter: RuleIterator, leve
         var full_path: FullPath = .{ .path = try std.mem.join(self.allocator, "/", path_chunks), .allocator = self.allocator };
         defer full_path.deinit();
 
-        std.debug.print("full_path: {s}\n", .{full_path.path});
+        // std.debug.print("full_path: {s}\n", .{full_path.path});
 
         var match_iter: MatchIterator = .init(full_path.path, entry.kind == .directory, rule_iter);
-        var prio_rule: ?[]const u8 = null;
+        const prio_rule: ?[]const u8 = match_iter.findLastMatch();
 
-        while (match_iter.peek() != null)
-            prio_rule = match_iter.next() orelse unreachable;
-
-        if (prio_rule) |rule| std.debug.print("matched rule: {s}\n", .{rule});
+        // if (prio_rule) |rule| std.debug.print("matched rule: {s}\n", .{rule});
 
         var node_index: ?usize = null;
         var node_added = false;
         if (prio_rule) |rule_match| {
             if (ignore(rule_match) == levelIsIgnore(level)) {
-                num_nodes_added += 1;
                 node_added = true;
 
                 switch (entry.kind) {
-                    .file => try self.addNode(.{ .file = full_path.transferOwnership() }),
-                    .directory => {
-                        try self.addNode(.{ .dir = .{ .name = full_path.transferOwnership(), .flat_breadth = 0 } });
-                        node_index = self.flat_tree.items.len - 1;
+                    .file => _ = try self.addNode(.{ .file = full_path.transferOwnership() }),
+                    .directory => node_index = try self.addNode(.{ .dir = .{ .name = full_path.transferOwnership(), .flat_breadth = 0 } }),
+                    else => {
+                        // TODO handle symlinks
+                        node_added = false;
                     },
-                    else => node_added = false,
                 }
+
+                if (node_added)
+                    num_nodes_added += 1;
             }
         }
 

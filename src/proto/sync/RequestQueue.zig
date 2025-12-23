@@ -9,7 +9,7 @@ pub const SendRequestError = error{};
 
 const Request = struct {
     request: SyncMessage,
-    response: SyncMessage,
+    response: SyncMessage = undefined,
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     sent: bool = false,
@@ -103,5 +103,27 @@ pub fn close(self: *RequestQueue) void {
 
         self.blocked_queue.deinit(self.allocator);
         self.pending_queue.deinit(self.allocator);
+    }
+}
+
+pub fn sendWaitForResponse(self: *RequestQueue, request: SyncMessage) !SyncMessage {
+    var req: Request = .{ .request = request };
+
+    {
+        self.queue_lock.lock();
+        defer self.queue_lock.unlock();
+
+        try self.blocked_queue.append(self.allocator, &req);
+    }
+
+    req.mutex.lock();
+    defer req.mutex.unlock();
+
+    while (!req.received) {
+        while (!req.interrupt) {
+            req.cond.wait(&req.mutex);
+        }
+
+        req.interrupt = false;
     }
 }

@@ -94,7 +94,7 @@ pub fn isolateRequestChunk(msg: SyncMessage) RequestChunkError!RequestChunk {
 
 pub fn sourceRequestChunk(msg: SyncMessage) RequestChunkError!RequestChunk {
     var req_chunk = try isolateRequestChunk(msg);
-    req_chunk.header = msg.data[0..header_size];
+    req_chunk.header = msg.data[0..header_size].*;
     return req_chunk;
 }
 
@@ -104,13 +104,13 @@ pub fn setErrorValue(self: *RequestChunk, err: RequestError) void {
 }
 
 pub fn constructRequestChunk(req_type: RequestType, data: []const u8) RequestChunk {
-    var req_chunk: RequestChunk = .{ .request_type = req_type, .data = data };
+    var req_chunk: RequestChunk = .{ .request_type = req_type, .data = data, .id = 0 };
     std.mem.copyForwards(u8, req_chunk.header[0..header_title.len], header_title);
     std.mem.writeInt(u32, req_chunk.header[header_title.len .. header_title.len + id_size], req_chunk.id, .little);
     std.mem.writeInt(u16, req_chunk.header[header_title.len + id_size .. header_title.len + id_size + request_type_size], @as(u16, @intFromEnum(req_type)), .little);
     req_chunk.setErrorValue(RequestError.Ok);
     std.mem.writeInt(u16, req_chunk.header[header_title.len + id_size + request_type_size .. header_title.len + id_size + request_type_size + resp_code_size], req_chunk.resp_code, .little);
-    std.mem.writeInt(u16, req_chunk.header[header_title.len + id_size + request_type_size + resp_code_size .. header_size], @as(u16, data.len), .little);
+    std.mem.writeInt(u16, req_chunk.header[header_title.len + id_size + request_type_size + resp_code_size .. header_size], @truncate(data.len), .little);
     return req_chunk;
 }
 

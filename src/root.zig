@@ -13,6 +13,10 @@ pub const cli = struct {
     pub const prompt = @import("cli/prompt.zig");
 };
 
+pub const client = struct {
+    pub const track = @import("client/track/IncludeTree.zig");
+};
+
 test {
-    std.testing.refAllDecls(@This());
+    std.testing.refAllDeclsRecursive(@This());
 }
