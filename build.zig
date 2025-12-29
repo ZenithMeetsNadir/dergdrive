@@ -19,12 +19,12 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const net_mod = b.dependency("net", .{
+    const net_mod = b.dependency("znetw", .{
         .target = target,
         .optimize = optimize,
-    }).module("net");
+    }).module("znetw");
 
-    exe_mod.addImport("net", net_mod);
+    exe_mod.addImport("znetw", net_mod);
 
     const exe = b.addExecutable(.{
         .name = "dergdrive",
