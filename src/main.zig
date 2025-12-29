@@ -1,6 +1,6 @@
 const std = @import("std");
 const dergdrive = @import("dergdrive");
-const net = @import("net");
+const znetw = @import("znetw");
 
 const buffer_size = 0x20000; // 128 kB
 var reader_buf: [buffer_size]u8 = undefined;
@@ -10,13 +10,13 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var server = try net.TcpServer.open("0.0.0.0", 9999, true, buffer_size, allocator);
+    var server = try znetw.TcpServer.open("0.0.0.0", 9999, true, buffer_size, allocator);
     defer server.close();
 
     server.dispatch_fn = serverDispatch;
     try server.listen();
 
-    var client = try net.TcpClient.connect("127.0.0.1", 9999, true, buffer_size);
+    var client = try znetw.TcpClient.connect("127.0.0.1", 9999, true, buffer_size);
     defer client.close();
 
     client.dispatch_fn = clientDispatch;
@@ -49,7 +49,7 @@ pub fn main() !void {
 var server_file: ?std.fs.File = null;
 var writer_buf: [buffer_size]u8 = undefined;
 
-fn serverDispatch(connection: *net.TcpServer.Connection, data: []const u8) anyerror!void {
+fn serverDispatch(connection: *znetw.TcpServer.Connection, data: []const u8) anyerror!void {
     _ = connection;
 
     if (server_file == null)
@@ -59,7 +59,7 @@ fn serverDispatch(connection: *net.TcpServer.Connection, data: []const u8) anyer
     std.log.info("server wrote {d} bytes of {d}", .{ bytes_written, data.len });
 }
 
-fn clientDispatch(client: *const net.TcpClient, data: []const u8) anyerror!void {
+fn clientDispatch(client: *const znetw.TcpClient, data: []const u8) anyerror!void {
     _ = client;
     std.debug.print("Client received: {s}\n", .{data});
 }
