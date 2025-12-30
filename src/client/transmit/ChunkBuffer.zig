@@ -9,20 +9,20 @@ back_buf: [chunk_size]u8 = undefined,
 data_len: usize = 0,
 empty: bool = false,
 w_lock: Thread.Mutex = .{},
-cond: Thread.Condition = .{},
+state_cond: Thread.Condition = .{},
 
-pub fn waitUntilEmpty(self: *ChunkBuffer, empty: bool) void {
+pub fn waitUntilState(self: *ChunkBuffer, empty: bool) void {
     self.w_lock.lock();
     defer self.w_lock.unlock();
 
     while (self.empty != empty)
-        self.cond.wait(&self.w_lock);
+        self.state_cond.wait(&self.w_lock);
 }
 
-pub fn finish(self: *ChunkBuffer, empty: bool) void {
+pub fn signalState(self: *ChunkBuffer, empty: bool) void {
     self.w_lock.lock();
     defer self.w_lock.unlock();
 
     self.empty = empty;
-    self.cond.signal();
+    self.state_cond.signal();
 }
