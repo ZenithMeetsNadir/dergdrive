@@ -3,9 +3,10 @@ const header = @import("header.zig");
 const SyncMessage = @import("SyncMessage.zig");
 const RequestChunk = @import("RequestChunk.zig");
 const PayloadChunk = @import("PayloadChunk.zig");
+const DestChunk = @import("DestChunk.zig");
 
 pub const Iterator = struct {
-    buffer: []const u8,
+    buffer: []u8,
     index: usize = 0,
 
     pub fn next(self: *Iterator) ReadError!?Chunk {
@@ -21,18 +22,20 @@ pub const Iterator = struct {
 pub const ChunkType = enum {
     sync_message,
     request,
+    destination,
     payload,
 
-    const PackedStrT = @Type(std.builtin.Type.Int{ .bits = 8 * header.header_title_size });
+    const PackedStrT = @Type(.{ .int = .{ .bits = 8 * header.header_title_size, .signedness = .unsigned } });
     fn packedString(title: [header.header_title_size]u8) PackedStrT {
-        return @as(*PackedStrT, @ptrCast(&title)).*;
+        return std.mem.readInt(PackedStrT, &title, .little);
     }
 
     pub fn fromHeaderTitle(title: [header.header_title_size]u8) ?ChunkType {
         return switch (packedString(title)) {
-            packedString(SyncMessage.header_title) => .sync_message,
-            packedString(RequestChunk.header_title) => .request,
-            packedString(PayloadChunk.header_title) => .payload,
+            packedString(SyncMessage.header_title.*) => .sync_message,
+            packedString(RequestChunk.header_title.*) => .request,
+            packedString(DestChunk.header_title.*) => .destination,
+            packedString(PayloadChunk.header_title.*) => .payload,
             else => null,
         };
     }
@@ -46,14 +49,19 @@ pub const ReadError = error{
     DataLenMismatch,
 };
 
+header_buf: []u8,
 chunk_type: ChunkType,
-data: []const u8,
+data: []u8,
 
 pub inline fn getWriteSize(self: Chunk) usize {
     return header.header_size + self.data.len;
 }
 
-pub fn readChunk(buffer: []const u8) ReadError!Chunk {
+pub inline fn updateSizeHeader(self: Chunk) void {
+    std.mem.writeInt(usize, self.header_buf[header.header_title_size..header.header_size], self.data.len, .little);
+}
+
+pub fn readChunk(buffer: []u8) ReadError!Chunk {
     if (buffer.len < header.header_size)
         return ReadError.InvalidHeader;
 
@@ -62,13 +70,43 @@ pub fn readChunk(buffer: []const u8) ReadError!Chunk {
         return ReadError.DataLenMismatch;
 
     return .{
+        .header_buf = buffer[0..header.header_size],
         .data = buffer[header.header_size .. header.header_size + size],
-        .chunk_type = ChunkType.fromHeaderTitle(buffer[0..header.header_title_size]) orelse return ReadError.UnknownChunkType,
+        .chunk_type = ChunkType.fromHeaderTitle(buffer[0..header.header_title_size].*) orelse return ReadError.UnknownChunkType,
     };
 }
 
-pub fn as(chunk: Chunk, comptime ChunkT: type) anyerror!ChunkT {
+pub fn createChunk(comptime ChunkT: type, buf: []u8) ChunkT {
+    // TODO validation of ChunkT
+
+    // switch (@typeInfo(ChunkT)) {
+    //     .@"struct" => |struc| {
+    //         if (!(for (struc.decls) |decl| {
+    //             if (std.mem.eql(u8, decl.name, "content_size"))
+    //                 break true;
+    //         } else false)) @compileError("struct " ++ @typeName(ChunkT) ++ " is missing content_size declaration");
+    //     },
+    //     else => @compileError("ChunkT must be a struct type"),
+    // }
+
+    const chunk_buf_size = header.header_size + ChunkT.content_size;
+    std.debug.assert(buf.len >= chunk_buf_size);
+
+    const chunk_buf = buf[0..chunk_buf_size];
+    var chunk: Chunk = .{
+        .header_buf = chunk_buf[0..header.header_size],
+        .data = chunk_buf[header.header_size..],
+        .chunk_type = ChunkType.fromHeaderTitle(ChunkT.header_title.*) orelse unreachable,
+    };
+
+    std.mem.copyForwards(u8, chunk.header_buf[0..header.header_title_size], ChunkT.header_title);
+    chunk.updateSizeHeader();
+
+    return chunk.as(ChunkT);
+}
+
+pub fn as(chunk: Chunk, comptime ChunkT: type) ChunkT {
     if (std.meta.hasFn(ChunkT, "fromChunk")) {
-        return try ChunkT.fromChunk(chunk);
-    } else return .{ .data = chunk.data };
+        return ChunkT.fromChunk(chunk);
+    } else @compileError("missing fromChunk function on type " ++ @typeName(ChunkT));
 }

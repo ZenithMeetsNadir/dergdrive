@@ -21,6 +21,13 @@ pub const proto = struct {
     pub const sync = struct {
         pub const SyncMessage = @import("proto/sync/SyncMessage.zig");
         pub const RequestChunk = @import("proto/sync/RequestChunk.zig");
+        pub const header = @import("proto/sync/header.zig");
+        pub const Chunk = @import("proto/sync/Chunk.zig");
+        pub const DestChunk = @import("proto/sync/DestChunk.zig");
+        pub const PayloadChunk = @import("proto/sync/PayloadChunk.zig");
+        pub const templates = struct {
+            pub const TransmitFileMsg = @import("proto/sync/templates/TransmitFileMsg.zig");
+        };
     };
 };
 

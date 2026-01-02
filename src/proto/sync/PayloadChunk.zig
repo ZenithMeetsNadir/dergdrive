@@ -3,10 +3,27 @@ const Chunk = @import("Chunk.zig");
 
 const PayloadChunk = @This();
 
-pub const header_title: []const u8 = "payd";
+pub const header_title = "payd";
+pub const content_size = 0; // variable size
 
-payload: []const u8,
+back_chunk: Chunk,
+payload: []u8,
 
-pub inline fn fromChunk(chunk: Chunk) Chunk.ReadError!PayloadChunk {
-    return .{ .payload = chunk.data };
+pub inline fn fromChunk(chunk: Chunk) PayloadChunk {
+    return .{
+        .back_chunk = chunk,
+        .payload = chunk.data,
+    };
+}
+
+pub fn claimBuf(self: *PayloadChunk, buf: []u8) void {
+    self.payload = buf;
+    self.back_chunk.data = buf;
+    self.back_chunk.updateSizeHeader();
+}
+
+pub fn unclaimBuf(self: *PayloadChunk) void {
+    self.payload = &[_]u8{};
+    self.back_chunk.data = &[_]u8{};
+    self.back_chunk.updateSizeHeader();
 }

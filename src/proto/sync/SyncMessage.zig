@@ -5,29 +5,48 @@ const RequestChunk = @import("RequestChunk.zig");
 
 const SyncMessage = @This();
 
-pub const IterFromBufError = error{ConvertFailed} || Chunk.ReadError;
+pub const header_title = "dsnc";
 
-pub const header_title: [header.header_title_size]u8 = "dsnc";
+// the reserved buffer for this sync message, including header
+msg_buf: []u8,
 
-data: []const u8,
-
-pub fn iterFromBuf(buffer: []const u8) IterFromBufError!Chunk.Iterator {
+pub fn iterFromBuf(buffer: []u8) Chunk.ReadError!Chunk.Iterator {
     const chunk = try Chunk.readChunk(buffer);
-    const s_msg = chunk.as(SyncMessage) catch return IterFromBufError.ConvertFailed;
-    return .{ .buffer = s_msg.data };
+    return .{ .buffer = chunk.data };
 }
 
-pub inline fn getWriteSize(self: SyncMessage) usize {
-    return header.header_size + self.data.len;
+pub fn dataBuf(self: SyncMessage) []u8 {
+    return self.msg_buf[header.header_size..];
 }
 
-pub fn writeMsg(self: SyncMessage, buffer: []u8) usize {
-    const write_size = self.getWriteSize();
-    std.debug.assert(buffer.len >= write_size);
+pub fn dataSize(self: SyncMessage) Chunk.ReadError!usize {
+    var chunk_iter = try iterFromBuf(self.msg_buf);
+    var total_size: usize = 0;
 
-    std.mem.copyForwards(u8, buffer[0..header.header_title_size], &header_title);
-    std.mem.writeInt(header.DataLenT, buffer[header.header_title_size .. header.header_title_size + header.data_len_size], self.data.len, .little);
-    std.mem.copyForwards(u8, buffer[header.header_size .. header.header_size + self.data.len], self.data);
+    while (chunk_iter.next() catch return total_size) |chunk| {
+        total_size += chunk.getWriteSize();
+    }
 
-    return write_size;
+    return total_size;
+}
+
+pub inline fn getWriteSize(self: SyncMessage) Chunk.ReadError!usize {
+    return header.header_size + try self.dataSize();
+}
+
+inline fn writeSize(self: SyncMessage, size: header.DataLenT) void {
+    std.mem.writeInt(usize, self.msg_buf[header.header_title_size..header.header_size], size, .little);
+}
+
+pub inline fn updateSizeHeader(self: SyncMessage) Chunk.ReadError!void {
+    self.writeSize(try self.dataSize());
+}
+
+pub inline fn resetSizeHeader(self: SyncMessage) void {
+    self.writeSize(self.msg_buf.len - header.header_size);
+}
+
+pub fn updateHeader(self: SyncMessage) Chunk.ReadError!void {
+    std.mem.copyForwards(u8, self.msg_buf[0..header.header_title_size], header_title);
+    try self.updateSizeHeader();
 }
