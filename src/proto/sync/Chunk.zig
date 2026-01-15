@@ -49,8 +49,12 @@ pub const ReadError = error{
     DataLenMismatch,
 };
 
-header_buf: []u8,
+pub const CreateError = error{
+    InsufficientBufferSpace,
+};
+
 chunk_type: ChunkType,
+header_buf: []u8,
 data: []u8,
 
 pub inline fn getWriteSize(self: Chunk) usize {
@@ -76,7 +80,7 @@ pub fn readChunk(buffer: []u8) ReadError!Chunk {
     };
 }
 
-pub fn createChunk(comptime ChunkT: type, buf: []u8) ChunkT {
+pub fn createChunk(comptime ChunkT: type, buf: []u8) CreateError!ChunkT {
     // TODO validation of ChunkT
 
     // switch (@typeInfo(ChunkT)) {
@@ -90,7 +94,8 @@ pub fn createChunk(comptime ChunkT: type, buf: []u8) ChunkT {
     // }
 
     const chunk_buf_size = header.header_size + ChunkT.content_size;
-    std.debug.assert(buf.len >= chunk_buf_size);
+    if (buf.len < chunk_buf_size)
+        return CreateError.InsufficientBufferSpace;
 
     const chunk_buf = buf[0..chunk_buf_size];
     var chunk: Chunk = .{

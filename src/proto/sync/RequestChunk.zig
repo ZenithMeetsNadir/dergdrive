@@ -40,19 +40,19 @@ pub const RequestType = enum(RequestTagT) {
 };
 
 pub const RespCodeTagT = u16;
-pub const ResponceCode = enum(RespCodeTagT) {
+pub const ResponseCode = enum(RespCodeTagT) {
     is_request,
     ok,
     generic_error,
     _,
 
-    pub const resp_no_error: ResponceCode = .is_request;
+    pub const resp_no_error: ResponseCode = .is_request;
 };
 
 back_chunk: Chunk,
 id: IdT,
 request_type: RequestType,
-resp_code: ResponceCode = .is_request,
+resp_code: ResponseCode = .is_request,
 
 pub fn fromChunk(chunk: Chunk) RequestChunk {
     const id = std.mem.readInt(IdT, chunk.data[0..id_size], .little);
