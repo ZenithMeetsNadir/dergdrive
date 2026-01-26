@@ -16,6 +16,7 @@ pub inline fn fromChunk(chunk: Chunk) PayloadChunk {
     };
 }
 
+/// makes sense only when the provided buffer is a slice of the message data buffer
 pub fn claimBuf(self: *PayloadChunk, buf: []u8) void {
     self.payload = buf;
     self.back_chunk.data = buf;

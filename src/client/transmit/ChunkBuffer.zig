@@ -4,17 +4,22 @@ const Thread = std.Thread;
 const ChunkBuffer = @This();
 
 pub const EmptyState = enum(u1) {
-    empty,
-    full,
+    empty = 0,
+    full = 1,
 };
 
 pub const chunk_size = 0x400000; // 4 MiB
 
 back_buf: [chunk_size]u8 = undefined,
+buf_len: usize,
 data_len: usize = 0,
 empty: EmptyState = .empty,
 w_lock: Thread.Mutex = .{},
 state_cond: Thread.Condition = .{},
+
+pub inline fn getBuf(self: *ChunkBuffer) []u8 {
+    return self.back_buf[0..self.buf_len];
+}
 
 pub fn waitUntilState(self: *ChunkBuffer, empty: EmptyState) void {
     self.w_lock.lock();
@@ -29,5 +34,8 @@ pub fn signalState(self: *ChunkBuffer, empty: EmptyState) void {
     defer self.w_lock.unlock();
 
     self.empty = empty;
+    if (empty == .full)
+        self.data_len = 0;
+
     self.state_cond.signal();
 }
